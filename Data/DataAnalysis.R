@@ -46,18 +46,46 @@ for (i in 1:length(datalist)){
   conc = conc_increase[floor(time/conc_duration)+1]
   
   data_t = as.data.frame(t(datalist[[i]][,c(5:ncol(data))]))
-  data_t = cbind(rep(chnk, nrow(data_t)), rep(tmstmp, nrow(data_t)), rep(sz, nrow(data_t)), data_t)
-  colnames(data_t) = c("chunk", "timestamp", "size", nms)
+  data_t = cbind(rep(chnk, nrow(data_t)), rep(tmstmp, nrow(data_t)), rep(sz, nrow(data_t)), 
+                 rep(time, nrow(data_t)), rep(conc, nrow(data_t)), 
+                 data_t)
+  colnames(data_t) = c("chunk", "timestamp", "size", "time", "concentration", nms)
   
   datalist[[i]] = data_t
 }
 
 data_join = datalist[[1]]
 for (i in 2:length(datalist)){
-  data_join = rbind(data_join, datalist[[2]])
+  data_join = rbind(data_join, datalist[[i]])
 }
 rownames(data_join) = NULL
 
 rm(data_t, i, nms, sz, tmstmp, chnk)
 
 # Replicate Joe's results ----
+# Plotting time against absz, only the frequency associated with -45 degree phase on the first chunk
+
+# Extract phases of first chunk
+target_phase = -45
+phase_deg = datalist[[1]]$phasez * 180/pi
+phase_close = order(abs(phase_deg-target_phase))
+
+target_freq = datalist[[1]]$frequency[phase_close[1]]
+
+data_target = data_join[data_join$frequency == target_freq,]
+
+# Find first local maxima
+data_diff = diff(data_target$absz, differences = 2) > 0
+i = 1
+while (data_diff[i] == data_diff[1]) {
+  i = i+1
+}
+data_effsz = cbind(Time = data_target$time, EffectSize = data_target$absz/(data_target$absz[i-1]))
+
+# Plotting
+ggplot(data_target, aes(x = time, y = absz)) +
+  geom_line() + 
+  geom_vline(xintercept = conc_duration*(1:floor(max(data_target$time)/conc_duration)))
+
+ggplot(data_effsz, aes(x = Time, y = EffectSize)) +
+  geom_line()
