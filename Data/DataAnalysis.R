@@ -2,7 +2,7 @@
 # Analyzing test data from breathalyzer
 # Author: Diego Rodríguez Esperante
 # Date of creation: 12/11/2024
-# Last edited: 12/11/2024
+# Last edited: 29/11/2024
 
 # Loading ----
 ## Loading packages ----
@@ -10,6 +10,7 @@ require(dplyr)
 require(ggfortify)
 require(reshape2)
 require(ggplot2)
+require(stringr)
 require(rstudioapi)
 
 # Open files ----
@@ -17,10 +18,27 @@ setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
 data_raw = read.csv("dev4891_imps_0_sample_00000.csv", sep = ";")
 
+# Options ----
+opts = list(deep_clean = TRUE,
+            joe_plots = FALSE)
+
 # Experimental constants ----
 chunk_duration = 20 # Each chunk represents a 5-second frequency sweep
 conc_duration = 300 # Every 5 minutes concentration increases
 conc_increase = c(0, 0.1, 0.5, 1, 10, 50, 100) # Concentrations increase to these values in nM
+
+# Support functions ----
+extract_freq = function(dataframe, target_phase = -45){
+  phase_deg = dataframe$phasez[dataframe$chunk == 0] * 180/pi
+  phase_close = order(abs(phase_deg-target_phase))
+  
+  freqs = dataframe$frequency[dataframe$chunk == 0]
+  target_freq = freqs[phase_close[1]]
+  
+  data_target = dataframe[dataframe$frequency == target_freq,]
+  
+  return(data_target)
+}
 
 # Cleanup ----
 data = data_raw
@@ -60,32 +78,91 @@ for (i in 2:length(datalist)){
 }
 rownames(data_join) = NULL
 
-rm(data_t, i, nms, sz, tmstmp, chnk)
+if(opts$deep_clean){
+  col_nms = colnames(data_join)
+  # Whitelist specific columns
+  white_cols = c("frequency")
+  
+  # Delete specific columns
+  manu_cols = c("timestamp", "tc", "tcmeas", "count", "flags", "nexttimestamp", "settimestamp",
+               "param0", "param0pwr", "param0stddev", "param1", "param1pwr", "param1stddev")
+  
+  # Delete power columns for redundancy
+  pwr_cols = col_nms[grepl('pwr', col_nms)]
+  
+  # Delete columns whose standard deviation is 0
+  std_cols = col_nms[grepl('stddev', col_nms)]
+  std_del = c()
+  for (i in 1:length(std_cols)){
+    if ((sum(data_join[,std_cols[i]]==0)/(nrow(data_join)))>=.9){
+      std_del = c(std_del,std_cols[i])
+    }
+  }
+  
+  std_cols = col_nms[grepl(paste(gsub("stddev", "", std_del), collapse = "|"), col_nms)]
+  
+  # Join together
+  del_cols = c(manu_cols, pwr_cols, std_cols)
+  del_cols = del_cols[!duplicated(del_cols)]
+  
+  # Remove whitelisted columns
+  for (i in 1:length(white_cols)){
+    del_cols = del_cols[!(del_cols == white_cols[i])]
+  }
+  
+  data_join = data_join %>% select(-one_of(del_cols))
+  
+  rm(col_nms, white_cols, manu_cols, pwr_cols, std_cols, std_del, del_cols)
+}
+
+# Reorder columns
+col_order = c("chunk", "size", "time", "concentration", "frequency")
+col_order = c(col_order, colnames(data_join)[!(colnames(data_join) %in% col_order)])
+
+data_join = data_join[,col_order]
+
+rm(data_t, i, nms, sz, tmstmp, chnk, time, conc, col_order)
 
 # Replicate Joe's results ----
-# Plotting time against absz, only the frequency associated with -45 degree phase on the first chunk
-
-# Extract phases of first chunk
-target_phase = -45
-phase_deg = datalist[[1]]$phasez * 180/pi
-phase_close = order(abs(phase_deg-target_phase))
-
-target_freq = datalist[[1]]$frequency[phase_close[1]]
-
-data_target = data_join[data_join$frequency == target_freq,]
-
-# Find first local maxima
-data_diff = diff(data_target$absz, differences = 2) > 0
-i = 1
-while (data_diff[i] == data_diff[1]) {
-  i = i+1
+if(opts$joe_plots){
+  # Plotting time against absz, only the frequency associated with -45 degree phase on the first chunk
+  
+  # Extract phases of first chunk
+  data_target = extract_freq(data_join, -45)
+  
+  # Find first local maxima
+  data_diff = diff(data_target$absz, differences = 2) > 0
+  i = 1
+  while (data_diff[i] == data_diff[1]) {
+    i = i+1
+  }
+  data_effsz = cbind(Time = data_target$time, EffectSize = data_target$absz/(data_target$absz[i-1]))
+  
+  # Plotting
+  ggplot(data_target, aes(x = time, y = absz)) +
+    geom_line() + 
+    geom_vline(xintercept = conc_duration*(1:floor(max(data_target$time)/conc_duration)))
+  
+  ggplot(data_effsz, aes(x = Time, y = EffectSize)) +
+    geom_line()
 }
-data_effsz = cbind(Time = data_target$time, EffectSize = data_target$absz/(data_target$absz[i-1]))
+# Other analyses ----
+## PCA ----
+if(!exists("data_target")){
+  data_target = extract_freq(data_join, -45)
+}
 
-# Plotting
-ggplot(data_target, aes(x = time, y = absz)) +
-  geom_line() + 
-  geom_vline(xintercept = conc_duration*(1:floor(max(data_target$time)/conc_duration)))
+pca = prcomp(data_target[,-c(1:5,9)])
+pca$rotation = -1*pca$rotation
+pca_obj = pca$x
 
-ggplot(data_effsz, aes(x = Time, y = EffectSize)) +
-  geom_line()
+ggplot(pca_obj, aes(x = PC1, y= PC2)) +
+  geom_point() +
+  xlab(paste0('PC1', ' (', (summary(pca)$importance[2,1]), ')')) +
+  ylab(paste0('PC2', ' (', (summary(pca)$importance[2,2]), ')'))
+
+## Correlation plot ----
+
+## Non-negative matrix factorization ----
+
+## Other features ----
