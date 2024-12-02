@@ -11,6 +11,8 @@ require(ggfortify)
 require(reshape2)
 require(ggplot2)
 require(stringr)
+require(gridExtra)
+require(cowplot)
 require(rstudioapi)
 
 # Open files ----
@@ -38,6 +40,20 @@ extract_freq = function(dataframe, target_phase = -45){
   data_target = dataframe[dataframe$frequency == target_freq,]
   
   return(data_target)
+}
+
+customggsave = function(plot, upscale=1.5, save_path = '', name = NULL){
+  save_path = paste0('./Plots', save_path)
+  if (is.null(name)){
+      name = deparse(substitute(plot))
+  }
+  ggsave(paste0(name,".png"),
+         plot = plot,
+         device = 'png',
+         width = round(1920*upscale),
+         height = round(1080*upscale),
+         units = 'px',
+         path = save_path)
 }
 
 # Cleanup ----
@@ -152,14 +168,21 @@ if(!exists("data_target")){
   data_target = extract_freq(data_join, -45)
 }
 
-pca = prcomp(data_target[,-c(1:5,9)])
-pca$rotation = -1*pca$rotation
+pca = prcomp(data_target[,-c(1:5)])
+pca_loadings = signif(-1*pca$rotation, digits = 3)
 pca_obj = pca$x
+plottype = c("PCA", "targeted", "all fields")
 
-ggplot(pca_obj, aes(x = PC1, y= PC2)) +
+pca_plot = ggplot(pca_obj, aes(x = PC1, y= PC2)) +
   geom_point() +
   xlab(paste0('PC1', ' (', (summary(pca)$importance[2,1]), ')')) +
-  ylab(paste0('PC2', ' (', (summary(pca)$importance[2,2]), ')'))
+  ylab(paste0('PC2', ' (', (summary(pca)$importance[2,2]), ')')) +
+  ggtitle(paste(plottype, collapse = ", "))
+
+pca_plot_tab = plot_grid(pca_plot, tableGrob(pca_loadings[,c("PC1","PC2")]), rel_widths = c(3,1)) +
+  theme_bw()
+
+customggsave(pca_plot_tab, upscale = 2, name = paste(plottype, collapse = "_"))
 
 ## Correlation plot ----
 
