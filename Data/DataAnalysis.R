@@ -14,15 +14,22 @@ require(stringr)
 require(gridExtra)
 require(cowplot)
 require(rstudioapi)
+require(NMF)
 
 # Open files ----
 setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 
-data_raw = read.csv("dev4891_imps_0_sample_00000.csv", sep = ";")
+analyte = "Acetaldehyde"
+file_analyze = choose.files(paste0(c(getwd(), "Data/TMPS", analyte, "Choose"), collapse = "/"))
 
+data_raw = read.csv(file_analyze, sep = ";")
+
+# str_match : sample_\d{5}
 # Options ----
 opts = list(deep_clean = TRUE,
-            joe_plots = FALSE)
+            joe_plots = FALSE,
+            make_plots = FALSE,
+            save_plots = FALSE)
 
 # Experimental constants ----
 chunk_duration = 20 # Each chunk represents a 5-second frequency sweep
@@ -40,6 +47,13 @@ extract_freq = function(dataframe, target_phase = -45){
   data_target = dataframe[dataframe$frequency == target_freq,]
   
   return(data_target)
+}
+
+cutie_layer = function(){
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = 'bottom',
+        legend.key.width = unit(3, 'lines'))
 }
 
 customggsave = function(plot, upscale=1.5, save_path = '', name = NULL){
@@ -132,7 +146,7 @@ if(opts$deep_clean){
 }
 
 # Reorder columns
-col_order = c("chunk", "size", "time", "concentration", "frequency")
+col_order = c("chunk", "size", "time", "concentration", "frequency", "settling", "bandwidth", "grid")
 col_order = c(col_order, colnames(data_join)[!(colnames(data_join) %in% col_order)])
 
 data_join = data_join[,col_order]
@@ -164,28 +178,66 @@ if(opts$joe_plots){
 }
 # Other analyses ----
 ## PCA ----
-if(!exists("data_target")){
-  data_target = extract_freq(data_join, -45)
+pca_opts = list(targeting = "untargeted",
+                fields = "reduced",
+                scaling = "unscaled",
+                color = "absz")
+
+# Frequency targeting
+if(pca_opts$targeting == "targeted"){
+  data_pca = extract_freq(data_join, -45)
+}else{
+  data_pca = data_join  
 }
 
-pca = prcomp(data_target[,-c(1:5)])
-pca_loadings = signif(-1*pca$rotation, digits = 3)
-pca_obj = pca$x
-plottype = c("PCA", "targeted", "all fields")
+# Z-score normalization just in case
+if(pca_opts$scaling == "scaled"){
+  for (i in 7:ncol(data_pca)){
+    data_pca[,i] = (data_pca[,i] - mean(data_pca[,i])) / sd(data_pca[,i])
+  }
+}
 
-pca_plot = ggplot(pca_obj, aes(x = PC1, y= PC2)) +
-  geom_point() +
-  xlab(paste0('PC1', ' (', (summary(pca)$importance[2,1]), ')')) +
-  ylab(paste0('PC2', ' (', (summary(pca)$importance[2,2]), ')')) +
-  ggtitle(paste(plottype, collapse = ", "))
+# Take in extraneous fields left behind
+# ignored_fields = c("chunk", "size", "time", "concentration", "frequency")
+if(pca_opts$fields == "reduced"){
+  pca_fields = c("absz", "abszstddev", "imagz", "imagzstddev", "phasez", "phasezstddev", "realz", "realzstddev")
+  pca = prcomp(data_pca[,pca_fields])
+  
+  rm(pca_fields)
+}else{
+  pca = prcomp(data_pca[,-c(1:6)])
+}
 
-pca_plot_tab = plot_grid(pca_plot, tableGrob(pca_loadings[,c("PC1","PC2")]), rel_widths = c(3,1)) +
-  theme_bw()
+if(opts$make_plots){
+  pca_loadings = signif(-1*pca$rotation, digits = 3)
+  pca_obj = pca$x
+  plottype = c("PCA", paste(c("Target:", "Fields:", "Scaling:", "Color:"), pca_opts))
+  
+  pca_plot = ggplot(pca_obj, aes(x = PC1, y= PC2, color = data_pca[, pca_opts$color])) +
+    geom_point(size = 2) +
+    labs(x = paste0('PC1', ' (', (summary(pca)$importance[2,1]), ')'),
+         y = paste0('PC2', ' (', (summary(pca)$importance[2,2]), ')'),
+         color = pca_opts$color) +
+    scale_color_continuous(low = "magenta", high = "cyan") +
+    ggtitle(paste(plottype, collapse = ", ")) +
+    theme_bw() + cutie_layer()
+  
+  pca_plot_tab = plot_grid(pca_plot, tableGrob(pca_loadings[,c("PC1","PC2")]), rel_widths = c(3,1)) +
+    theme_bw()
+  if(opts$save_plots){
+    customggsave(pca_plot_tab, upscale = 2, name = paste(c("PCA", pca_opts), collapse = "_"))
+  }
+}
 
-customggsave(pca_plot_tab, upscale = 2, name = paste(plottype, collapse = "_"))
+rm(plottype)
 
 ## Correlation plot ----
 
+
 ## Non-negative matrix factorization ----
 
+
 ## Other features ----
+
+
+# Save data ----
