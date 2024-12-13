@@ -30,15 +30,16 @@ opts = list(
   deep_clean = TRUE,
   joe_plots = FALSE,
   make_plots = TRUE,
-  save_plots = FALSE,
+  save_plots = TRUE,
   multi_analyte = TRUE
 )
 
 pca_opts = list(
   targeting = "untargeted",
   fields = "reduced",
-  scaling = "unscaled",
-  color = "absz"
+  scaling = "scaled",
+  color = "absz",
+  pca_fields = c("absz", "abszstddev", "imagz", "imagzstddev", "phasez", "phasezstddev", "realz", "realzstddev")
 )
 
 # Experimental constants ----
@@ -255,19 +256,7 @@ if (pca_opts$scaling == "scaled") {
 # Take in extraneous fields left behind
 # ignored_fields = c("chunk", "size", "time", "concentration", "frequency")
 if (pca_opts$fields == "reduced") {
-  pca_fields = c(
-    "absz",
-    "abszstddev",
-    "imagz",
-    "imagzstddev",
-    "phasez",
-    "phasezstddev",
-    "realz",
-    "realzstddev"
-  )
-  pca = prcomp(data_pca[, pca_fields])
-  
-  rm(pca_fields)
+  pca = prcomp(data_pca[, pca_opts$pca_fields])
 } else{
   pca = prcomp(data_pca[, -c(1:8)])
 }
@@ -304,7 +293,7 @@ rm(plottype)
 # Multi analyte ----
 if(opts$multi_analyte){
   opts_multi = list(field = "absz",
-                    scaling = "scaled")
+                    scaling = "unscaled")
   
   data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join))))
   names(data_mlist)[1] = analyte
@@ -327,13 +316,17 @@ if(opts$multi_analyte){
   
   data_multi = extract_freq(data_mlist[[1]])
   if(opts_multi$scaling == "scaled"){
-    data_multi[,opts_multi$field] = (data_multi[,opts_multi$field] - mean(data_multi[,opts_multi$field]))/(sd(data_multi[,opts_multi$field]))
+    for (i in 1:length(pca_opts$pca_fields)){
+      data_multi[,pca_opts$pca_fields[i]] = (data_multi[,pca_opts$pca_fields[i]] - mean(data_multi[,pca_opts$pca_fields[i]]))/(sd(data_multi[,pca_opts$pca_fields[i]]))
+    }
   }
   
   for (i in 2:length(data_mlist)){
     data_temp = extract_freq(data_mlist[[i]])
     if(opts_multi$scaling == "scaled"){
-      data_temp[,opts_multi$field] = (data_temp[,opts_multi$field] - mean(data_temp[,opts_multi$field]))/(sd(data_temp[,opts_multi$field]))
+      for (i in 1:length(pca_opts$pca_fields)){
+        data_temp[,pca_opts$pca_fields[i]] = (data_temp[,pca_opts$pca_fields[i]] - mean(data_temp[,pca_opts$pca_fields[i]]))/(sd(data_temp[,pca_opts$pca_fields[i]]))
+      }
     }
     
     data_multi = rbind(data_multi, data_temp)
@@ -343,19 +336,7 @@ if(opts$multi_analyte){
   
   # PCA
   if (pca_opts$fields == "reduced") {
-    pca_fields = c(
-      "absz",
-      "abszstddev",
-      "imagz",
-      "imagzstddev",
-      "phasez",
-      "phasezstddev",
-      "realz",
-      "realzstddev"
-    )
-    pca = prcomp(data_multi[, pca_fields])
-    
-    rm(pca_fields)
+    pca = prcomp(data_multi[, pca_opts$pca_fields])
   }else{
     pca = prcomp(data_multi[, -c(1:9)])
   }
@@ -369,7 +350,7 @@ if(opts$multi_analyte){
     pca_obj = pca$x
     plottype = c(paste(c(
       "Target:", "Fields:", "Scaling:", "Color:"
-    ), pca_opts))
+    ), pca_opts[1:4]))
     
     pca_plot = ggplot(pca_obj, aes(x = PC1, y = PC2, color = data_multi[, pca_opts$color])) +
       geom_point(size = 2, alpha = .4, position = "jitter") +
@@ -385,7 +366,7 @@ if(opts$multi_analyte){
     if (opts$save_plots) {
       customggsave(pca_plot_tab,
                    upscale = 2,
-                   name = paste(c("PCAmulti", pca_opts), collapse = "_"))
+                   name = paste(c("PCAmulti", pca_opts[1:4]), collapse = "_"))
     }
   }
 }
