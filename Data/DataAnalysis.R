@@ -7,6 +7,7 @@
 # Loading ----
 ## Loading packages ----
 require(dplyr)
+require(utils)
 require(ggfortify)
 require(reshape2)
 require(ggplot2)
@@ -16,26 +17,20 @@ require(cowplot)
 require(rstudioapi)
 require(NMF)
 
-# Open files ----
-setwd(dirname(rstudioapi::getSourceEditorContext()$path))
-
-file_analyze = choose.files(file.path(getwd(), "Data/TMPS", "Choose"))
-analyte = basename(dirname(dirname(file_analyze)))
-
-data_raw = read.csv(file_analyze, sep = ";")
-
 # str_match : sample_\d{5}
 # Options ----
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+
 opts = list(
   deep_clean = TRUE,
   joe_plots = FALSE,
   make_plots = TRUE,
-  save_plots = TRUE,
+  save_plots = FALSE,
   multi_analyte = TRUE
 )
 
 pca_opts = list(
-  targeting = "untargeted",
+  targeting = -45,
   fields = "reduced",
   scaling = "scaled",
   color = "absz",
@@ -207,140 +202,177 @@ customggsave = function(plot, upscale = 1.5, save_path = '', name = NULL) {
 }
 
 # Single analyte ----
-data = data_raw
-
-# Cleanup
-data_join = clean_data(data, deep_clean = opts$deep_clean)
-
-## Replicate Joe's plots ----
-if (opts$joe_plots) {
-  # Plotting time against absz, only the frequency associated with -45 degree phase on the first chunk
+if(!opts$multi_analyte){
+  # Open file
+  file_analyze = file.choose()
+  analyte = basename(dirname(dirname(file_analyze)))
   
-  # Extract phases of first chunk
-  data_target = extract_freq(data_join, -45)
+  data_raw = read.csv(file_analyze, sep = ";")
   
-  # Find first local maxima
-  data_diff = diff(data_target$absz, differences = 2) > 0
-  i = 1
-  while (data_diff[i] == data_diff[1]) {
-    i = i + 1
+  data = data_raw
+  
+  # Cleanup
+  data_join = clean_data(data, deep_clean = opts$deep_clean)
+  
+  ## Replicate Joe's plots ----
+  if (opts$joe_plots) {
+    # Extract phases of first chunk
+    data_target = extract_freq(data_join, -45)
+    
+    # Find first local maxima
+    data_diff = diff(data_target$absz, differences = 2) > 0
+    i = 1
+    while (data_diff[i] == data_diff[1]) {
+      i = i + 1
+    }
+    data_effsz = cbind(Time = data_target$time,
+                       EffectSize = data_target$absz / (data_target$absz[i - 1]))
+    
+    # Plotting
+    ggplot(data_target, aes(x = time, y = absz)) +
+      geom_line() +
+      geom_vline(xintercept = conc_duration * (1:floor(max(data_target$time) /
+                                                         conc_duration)))
+    
+    ggplot(data_effsz, aes(x = Time, y = EffectSize)) +
+      geom_line()
   }
-  data_effsz = cbind(Time = data_target$time,
-                     EffectSize = data_target$absz / (data_target$absz[i - 1]))
-  
-  # Plotting
-  ggplot(data_target, aes(x = time, y = absz)) +
-    geom_line() +
-    geom_vline(xintercept = conc_duration * (1:floor(max(data_target$time) /
-                                                       conc_duration)))
-  
-  ggplot(data_effsz, aes(x = Time, y = EffectSize)) +
-    geom_line()
-}
-## Other analyses ----
-### PCA ----
-# Frequency targeting
-if (pca_opts$targeting == "targeted") {
-  data_pca = extract_freq(data_join, -45)
-} else{
-  data_pca = data_join
-}
-
-# Z-score normalization just in case
-if (pca_opts$scaling == "scaled") {
-  for (i in 7:ncol(data_pca)) {
-    data_pca[, i] = (data_pca[, i] - mean(data_pca[, i])) / sd(data_pca[, i])
+  ## Other analyses ----
+  ### PCA ----
+  # Frequency targeting
+  if (!is.na(pca_opts$targeting)){
+    data_pca = extract_freq(data_join, pca_opts$targeting)
+  } else{
+    data_pca = data_join
   }
-}
-
-# Take in extraneous fields left behind
-# ignored_fields = c("chunk", "size", "time", "concentration", "frequency")
-if (pca_opts$fields == "reduced") {
-  pca = prcomp(data_pca[, pca_opts$pca_fields])
-} else{
-  pca = prcomp(data_pca[, -c(1:8)])
-}
-
-if (opts$make_plots) {
-  pca_loadings = signif(-1 * pca$rotation, digits = 3)
-  pca_obj = pca$x
-  plottype = c(paste(c(
-    "Target:", "Fields:", "Scaling:", "Color:"
-  ), pca_opts))
   
-  pca_plot = ggplot(pca_obj, aes(x = PC1, y = PC2, color = data_pca[, pca_opts$color])) +
-    geom_point(size = 2) +
-    labs(
-      x = paste0('PC1', ' (', (summary(pca)$importance[2, 1]), ')'),
-      y = paste0('PC2', ' (', (summary(pca)$importance[2, 2]), ')'),
-      color = pca_opts$color
-    ) +
-    scale_color_continuous(low = "magenta", high = "cyan") +
-    ggtitle("Principal Component Analysis", subtitle = paste(plottype, collapse = ", ")) +
-    theme_bw() + cutie_layer()
-  
-  pca_plot_tab = plot_grid(pca_plot, tableGrob(pca_loadings[, c("PC1", "PC2")]), rel_widths = c(3, 1)) +
-    theme_bw()
-  if (opts$save_plots) {
-    customggsave(pca_plot_tab,
-                 upscale = 2,
-                 name = paste(c("PCA", pca_opts), collapse = "_"))
+  # Z-score normalization just in case
+  if (pca_opts$scaling == "scaled") {
+    for (i in 7:ncol(data_pca)) {
+      data_pca[, i] = (data_pca[, i] - mean(data_pca[, i])) / sd(data_pca[, i])
+    }
   }
+  
+  # Take in extraneous fields left behind
+  # ignored_fields = c("chunk", "size", "time", "concentration", "frequency")
+  if (pca_opts$fields == "reduced") {
+    pca = prcomp(data_pca[, pca_opts$pca_fields])
+  } else{
+    pca = prcomp(data_pca[, -c(1:8)])
+  }
+  
+  if (opts$make_plots) {
+    pca_loadings = signif(-1 * pca$rotation, digits = 3)
+    pca_obj = pca$x
+    plottype = c(paste(c(
+      "Target:", "Fields:", "Scaling:", "Color:"
+    ), pca_opts[1:4]))
+    
+    pca_plot = ggplot(pca_obj, aes(x = PC1, y = PC2, color = data_pca[, pca_opts$color])) +
+      geom_point(size = 2) +
+      labs(
+        x = paste0('PC1', ' (', (summary(pca)$importance[2, 1]), ')'),
+        y = paste0('PC2', ' (', (summary(pca)$importance[2, 2]), ')'),
+        color = pca_opts$color
+      ) +
+      scale_color_continuous(low = "magenta", high = "cyan") +
+      ggtitle("Principal Component Analysis", subtitle = paste(plottype, collapse = ", ")) +
+      theme_bw() + cutie_layer()
+    
+    pca_plot_tab = plot_grid(pca_plot, tableGrob(pca_loadings[, c("PC1", "PC2")]), rel_widths = c(3, 1)) +
+      theme_bw()
+    if (opts$save_plots) {
+      customggsave(pca_plot_tab,
+                   upscale = 2,
+                   name = paste(c("PCA", pca_opts), collapse = "_"))
+    }
+  }
+  
+  rm(plottype)
 }
-
-rm(plottype)
-
 # Multi analyte ----
 if(opts$multi_analyte){
-  opts_multi = list(field = "absz",
-                    scaling = "unscaled")
+  opts_multi = list(all_files = TRUE,
+                    field = "absz",
+                    scaling = "scaled")
   
-  data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join))))
-  names(data_mlist)[1] = analyte
-  
-  file_analyze = choose.files(file.path(getwd(), "Data/TMPS", "Choose"))
-  while (!identical(file_analyze, character(0))) {
+  # Open files
+  if(!opts_multi$all_files){
     data_raw = read.csv(file_analyze, sep = ";")
     
     data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
     
-    analyte = basename(dirname(dirname(file_analyze)))
-    data_mlist[[length(data_mlist) + 1]] = cbind(data_join, Analyte = rep(analyte, nrow(data_join)))
+    data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join))))
+    names(data_mlist)[1] = analyte
     
-    names(data_mlist)[length(data_mlist)] = analyte
-    names(data_mlist) = make.names(names(data_mlist), unique = T)
-    
-    file_analyze = choose.files(file.path(getwd(), "Data/TMPS", "Choose"))
-  }
-  rm(data_raw, file_analyze, analyte)
-  
-  data_multi = extract_freq(data_mlist[[1]])
-  if(opts_multi$scaling == "scaled"){
-    for (i in 1:length(pca_opts$pca_fields)){
-      data_multi[,pca_opts$pca_fields[i]] = (data_multi[,pca_opts$pca_fields[i]] - mean(data_multi[,pca_opts$pca_fields[i]]))/(sd(data_multi[,pca_opts$pca_fields[i]]))
+    file_analyze = file.choose()
+    while (!identical(file_analyze, character(0))) {
+      data_raw = read.csv(file_analyze, sep = ";")
+      
+      data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
+      
+      analyte = basename(dirname(dirname(file_analyze)))
+      data_mlist[[length(data_mlist) + 1]] = cbind(data_join, Analyte = rep(analyte, nrow(data_join)))
+      
+      names(data_mlist)[length(data_mlist)] = analyte
+      names(data_mlist) = make.names(names(data_mlist), unique = T)
+      
+      file_analyze = file.choose()
     }
+    rm(data_raw, file_analyze, analyte)
+  }else{
+    tryCatch({base_dir = choose.dir()},
+             error = function(e){
+               require(tcltk)
+               base_dir = tk_choose.dir()})
+    
+    # Organization of files is presumed to be Substrate > Analyte > All replicates of a given analyte in separate folders
+    data_filenames = list.files(base_dir, pattern = "_data_.*.csv", full.names = T, recursive = T)
+    for(i in 1:length(data_filenames)){
+      data_raw = read.csv(data_filenames[i], sep = ";")
+      
+      data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
+      analyte = basename(dirname(dirname(data_filenames[i])))
+      
+      if(exists("data_mlist")){
+        data_mlist[[length(data_mlist) + 1]] = cbind(data_join, Analyte = rep(analyte, nrow(data_join)))
+        names(data_mlist)[length(data_mlist)] = analyte
+        names(data_mlist) = make.names(names(data_mlist), unique = T)
+        
+      }else{
+        data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join))))
+        names(data_mlist)[1] = analyte
+      }
+      
+    }
+    rm(data_raw, data_join, data_filenames, analyte, i)
+    
   }
   
-  for (i in 2:length(data_mlist)){
+  # Putting it all in the same data frame for PCR
+  for (i in 1:length(data_mlist)){
     data_temp = extract_freq(data_mlist[[i]])
     if(opts_multi$scaling == "scaled"){
       for (i in 1:length(pca_opts$pca_fields)){
         data_temp[,pca_opts$pca_fields[i]] = (data_temp[,pca_opts$pca_fields[i]] - mean(data_temp[,pca_opts$pca_fields[i]]))/(sd(data_temp[,pca_opts$pca_fields[i]]))
       }
     }
-    
-    data_multi = rbind(data_multi, data_temp)
+    if(exists("data_multi")){
+      data_multi = rbind(data_multi, data_temp)
+    }else{
+      data_multi = data_temp
+    }
   }
   data_multi = data_multi %>% select(Analyte, everything())
   data_multi$Analyte = as.factor(data_multi$Analyte)
   
-  # PCA
   if (pca_opts$fields == "reduced") {
     pca = prcomp(data_multi[, pca_opts$pca_fields])
   }else{
     pca = prcomp(data_multi[, -c(1:9)])
   }
   
+  # Making PCA plots
   if (opts$make_plots) {
     pca_opts$targeting = "targeted"
     pca_opts$scaling = opts_multi$scaling
