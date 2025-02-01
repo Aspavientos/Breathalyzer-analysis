@@ -25,7 +25,7 @@ opts = list(
   deep_clean = TRUE,
   joe_plots = FALSE,
   make_plots = TRUE,
-  save_plots = FALSE,
+  save_plots = TRUE,
   multi_analyte = TRUE
 )
 
@@ -79,8 +79,10 @@ clean_data = function(data, deep_clean = T) {
   }
   
   data_join = datalist[[1]]
-  for (i in 2:length(datalist)) {
-    data_join = rbind(data_join, datalist[[i]])
+  if (length(datalist)>1){
+    for (i in 2:length(datalist)) {
+      data_join = rbind(data_join, datalist[[i]])
+    }
   }
   rownames(data_join) = NULL
   
@@ -112,9 +114,9 @@ clean_data = function(data, deep_clean = T) {
     # Delete columns whose standard deviation is 0
     std_cols = col_nms[grepl('stddev', col_nms)]
     std_del = c()
-    for (i in 1:length(std_cols)) {
-      if ((sum(data_join[, std_cols[i]] == 0) / (nrow(data_join))) >= .9) {
-        std_del = c(std_del, std_cols[i])
+    for (k in 1:length(std_cols)) {
+      if (((sum(data_join[, std_cols[k]] == 0, na.rm = T) / (nrow(data_join))) >= .9)){
+        std_del = c(std_del, std_cols[k])
       }
     }
     
@@ -294,7 +296,7 @@ if(!opts$multi_analyte){
 if(opts$multi_analyte){
   opts_multi = list(all_files = TRUE,
                     field = "absz",
-                    scaling = "scaled")
+                    scaling = "unscaled")
   
   # Open files
   if(!opts_multi$all_files){
@@ -321,13 +323,15 @@ if(opts$multi_analyte){
     }
     rm(data_raw, file_analyze, analyte)
   }else{
-    tryCatch({base_dir = choose.dir()},
-             error = function(e){
-               require(tcltk)
-               base_dir = tk_choose.dir()})
+    base_dir = "Data/TMPS" # Change this substrate directory
+    functionalization = strsplit(base_dir, split = "/")[[1]][2]
     
     # Organization of files is presumed to be Substrate > Analyte > All replicates of a given analyte in separate folders
-    data_filenames = list.files(base_dir, pattern = "_data_.*.csv", full.names = T, recursive = T)
+    data_filenames = list.files(paste(c(getwd(), base_dir), collapse = "/"), pattern = "_data_.*.csv", full.names = T, recursive = T)
+    if(length(data_filenames)==0){
+      stop("No data files found in directory. Check that data files have '_data_' on the name, or pick a different folder")
+    }
+    
     for(i in 1:length(data_filenames)){
       data_raw = read.csv(data_filenames[i], sep = ";")
       
@@ -366,6 +370,11 @@ if(opts$multi_analyte){
   data_multi = data_multi %>% select(Analyte, everything())
   data_multi$Analyte = as.factor(data_multi$Analyte)
   
+  # For now simply remove NAs
+  for (i in 1:length(pca_opts$pca_fields)){
+    data_multi = data_multi[!is.na(data_multi[,pca_opts$pca_fields[i]]),]
+  }
+  
   if (pca_opts$fields == "reduced") {
     pca = prcomp(data_multi[, pca_opts$pca_fields])
   }else{
@@ -390,7 +399,7 @@ if(opts$multi_analyte){
         y = paste0('PC2', ' (', (summary(pca)$importance[2, 2]), ')'),
         color = pca_opts$color) +
       #scale_color_continuous(low = "magenta", high = "cyan") +
-      ggtitle("Multianalyte PCA", subtitle = paste(plottype, collapse = ", ")) +
+      ggtitle(paste0("Multianalyte PCA: ", functionalization, " functionalization"), subtitle = paste(plottype, collapse = ", ")) +
       theme_bw() + cutie_layer()
     
     pca_plot_tab = plot_grid(pca_plot, tableGrob(pca_loadings[, c("PC1", "PC2")]), rel_widths = c(3, 1)) +
@@ -398,6 +407,7 @@ if(opts$multi_analyte){
     if (opts$save_plots) {
       customggsave(pca_plot_tab,
                    upscale = 2,
+                   save_path = paste0("/",functionalization),
                    name = paste(c("PCAmulti", pca_opts[1:4]), collapse = "_"))
     }
   }
