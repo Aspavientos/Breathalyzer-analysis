@@ -323,7 +323,7 @@ if(opts$multi_analyte){
     }
     rm(data_raw, file_analyze, analyte)
   }else{
-    base_dir = "Data/TMPS" # Change this substrate directory
+    base_dir = "Data/APTES" # Change this substrate directory
     functionalization = strsplit(base_dir, split = "/")[[1]][2]
     
     # Organization of files is presumed to be Substrate > Analyte > All replicates of a given analyte in separate folders
@@ -393,11 +393,26 @@ if(opts$multi_analyte){
       "Target:", "Fields:", "Scaling:", "Color:"
     ), pca_opts[1:4]))
     
+    # Count number of repeats per analyte
+    analy_list = rep("", 7)
+    for (i in 1:length(data_mlist)){
+      analy_list[i] = data_mlist[[i]]$Analyte[1]
+    }
+    total_analy = data.frame(Analytes = unique(analy_list),
+                             Repeats = rep(NA, length(unique(analy_list))))
+    for (i in 1:nrow(total_analy)){
+      total_analy$Repeats[i] = sum(total_analy$Analytes[i] == analy_list)
+    }
+    
+    total_analy$Analytes = factor(total_analy$Analytes, levels = levels(data_multi$Analyte))
+    total_analy = total_analy[order(total_analy$Analytes),]
+    
     pca_plot = ggplot(pca_obj, aes(x = PC1, y = PC2, color = data_multi[, pca_opts$color])) +
       geom_point(size = 2, alpha = .4, position = "jitter") +
       labs(x = paste0('PC1', ' (', (summary(pca)$importance[2, 1]), ')'),
         y = paste0('PC2', ' (', (summary(pca)$importance[2, 2]), ')'),
         color = pca_opts$color) +
+      scale_color_discrete(labels = paste(levels(total_analy$Analytes), total_analy$Repeats)) + 
       #scale_color_continuous(low = "magenta", high = "cyan") +
       ggtitle(paste0("Multianalyte PCA: ", functionalization, " functionalization"), subtitle = paste(plottype, collapse = ", ")) +
       theme_bw() + cutie_layer()
@@ -416,7 +431,11 @@ if(opts$multi_analyte){
 
 
 ## Non-negative matrix factorization ----
+data_sub = data_multi[data_multi$Analyte=="Acetaldehyde",pca_opts$pca_fields]
+data_sub = abs(data_sub)
 
+nmf_res = nmf(data_sub, 4)
+summary(nmf_res)
 
 ## Other features ----
 
