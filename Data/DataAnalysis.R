@@ -24,8 +24,8 @@ setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 opts = list(
   deep_clean = TRUE,
   joe_plots = FALSE,
-  make_plots = TRUE,
-  save_plots = FALSE,
+  make_plots = FALSE,
+  save_plots = TRUE,
   multi_analyte = TRUE,
   freq_sweep = TRUE
 )
@@ -39,7 +39,7 @@ pca_opts = list(
 )
 
 # Experimental constants ----
-chunk_duration = 20 # Each chunk represents a 5-second frequency sweep
+chunk_duration = 20 # Each chunk represents a 20-second frequency sweep
 conc_duration = 300 # Every 5 minutes concentration increases
 conc_increase = c(0, 0.1, 0.5, 1, 10, 50, 100) # Concentrations increase to these values in nM
 
@@ -252,7 +252,7 @@ if(opts$multi_analyte){
     }
     rm(data_raw, file_analyze, analyte)
   }else{
-    base_dir = "Data/APTES" # Change this substrate directory
+    base_dir = "Data/TMPS" # Change this substrate directory
     functionalization = strsplit(base_dir, split = "/")[[1]][2]
     
     # Organization of files is presumed to be Substrate > Analyte > All replicates of a given analyte in separate folders
@@ -316,7 +316,13 @@ if(opts$freq_sweep){
       }
     }
   }
-  rm(data_temp, data_mfreq)
+  
+  if(opts$save_plots){
+    csvname = paste0("FreqSweep_", paste0(gsub("-", "n", phases), collapse = ""), "_", functionalization,".csv")
+    write.csv(data_freq, file = paste0("./CSV/", csvname), row.names = F)
+  }
+  
+  rm(data_temp, data_mfreq, csvname)
 }
 # Making plots ----
 if(!opts$multi_analyte){
