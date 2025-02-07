@@ -3,7 +3,7 @@
 # Author: Diego Rodríguez Esperante
 # Date of creation: 12/11/2024
 # Last edited: 29/11/2024
-
+rm(list=ls())
 # Loading ----
 ## Loading packages ----
 require(dplyr)
@@ -25,8 +25,9 @@ opts = list(
   deep_clean = TRUE,
   joe_plots = FALSE,
   make_plots = TRUE,
-  save_plots = TRUE,
-  multi_analyte = TRUE
+  save_plots = FALSE,
+  multi_analyte = TRUE,
+  freq_sweep = TRUE
 )
 
 pca_opts = list(
@@ -34,7 +35,7 @@ pca_opts = list(
   fields = "reduced",
   scaling = "scaled",
   color = "absz",
-  pca_fields = c("absz", "abszstddev", "imagz", "imagzstddev", "phasez", "phasezstddev", "realz", "realzstddev")
+  pca_fields = c("absz", "imagz", "phasez", "realz")
 )
 
 # Experimental constants ----
@@ -203,7 +204,8 @@ customggsave = function(plot, upscale = 1.5, save_path = '', name = NULL) {
   )
 }
 
-# Single analyte ----
+# Data processing ----
+## Single analyte ----
 if(!opts$multi_analyte){
   # Open file
   file_analyze = file.choose()
@@ -215,8 +217,110 @@ if(!opts$multi_analyte){
   
   # Cleanup
   data_join = clean_data(data, deep_clean = opts$deep_clean)
+}
+## Multi analyte ----
+if(opts$multi_analyte){
+  opts_multi = list(all_files = TRUE,
+                    field = "absz",
+                    scaling = "unscaled")
   
-  ## Replicate Joe's plots ----
+  # Open files
+  if(!opts_multi$all_files){
+    data_raw = read.csv(file_analyze, sep = ";")
+    
+    data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
+    
+    
+    test = 1
+    data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join)), Test = rep(test, nrow(data_join))))
+    names(data_mlist)[1] = analyte
+    
+    file_analyze = file.choose()
+    while (!identical(file_analyze, character(0))) {
+      data_raw = read.csv(file_analyze, sep = ";")
+      
+      data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
+      
+      test = test + 1
+      analyte = basename(dirname(dirname(file_analyze)))
+      data_mlist[[length(data_mlist) + 1]] = cbind(data_join, Analyte = rep(analyte, nrow(data_join)), Test = rep(test, nrow(data_join)))
+      
+      names(data_mlist)[length(data_mlist)] = analyte
+      names(data_mlist) = make.names(names(data_mlist), unique = T)
+      
+      file_analyze = file.choose()
+    }
+    rm(data_raw, file_analyze, analyte)
+  }else{
+    base_dir = "Data/APTES" # Change this substrate directory
+    functionalization = strsplit(base_dir, split = "/")[[1]][2]
+    
+    # Organization of files is presumed to be Substrate > Analyte > All replicates of a given analyte in separate folders
+    data_filenames = list.files(paste(c(getwd(), base_dir), collapse = "/"), pattern = "_data_.*.csv", full.names = T, recursive = T)
+    if(length(data_filenames)==0){
+      stop("No data files found in directory. Check that data files have '_data_' on the name, or pick a different folder")
+    }
+    
+    test = 1
+    for(i in 1:length(data_filenames)){
+      data_raw = read.csv(data_filenames[i], sep = ";")
+      
+      data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
+      analyte = basename(dirname(dirname(data_filenames[i])))
+      
+      if(i == 1){
+        data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join)), Test = rep(test, nrow(data_join))))
+        names(data_mlist)[1] = analyte
+      }else{
+        data_mlist[[length(data_mlist) + 1]] = cbind(data_join, Analyte = rep(analyte, nrow(data_join)), Test = rep(test, nrow(data_join)))
+        names(data_mlist)[length(data_mlist)] = analyte
+        names(data_mlist) = make.names(names(data_mlist), unique = T)
+      }
+      data_mlist[[i]] = data_mlist[[i]] %>% select(Analyte, Test, everything())
+      data_mlist[[i]]$Analyte = as.factor(data_mlist[[i]]$Analyte)
+      data_mlist[[i]]$Test = as.factor(data_mlist[[i]]$Test)
+      test = test + 1
+    }
+    rm(data_raw, data_join, data_filenames, analyte, i, test)
+  }
+}
+## Frequency sweep ----
+if(opts$freq_sweep){
+  phases = c(-40, -45, -50)
+  
+  if(!opts$multi_analyte){
+    
+  }else{
+    for (i in 1:length(data_mlist)){
+      for (j in 1:length(phases)){
+        data_temp = extract_freq(data_mlist[[i]], phases[j])
+        data_temp = data_temp[,c("Analyte", "Test", "chunk", "time", "concentration", pca_opts$pca_fields)]
+        vars = colnames(data_temp)[colnames(data_temp) %in% pca_opts$pca_fields]
+        colnames(data_temp)[colnames(data_temp) %in% pca_opts$pca_fields] = paste0(vars, rep(phases[j], length(vars)))
+        
+        # If NAs from recording are carried over, delete them here
+        data_temp = data_temp[!is.na(data_temp$chunk),]
+        
+        if(j == 1){
+          data_mfreq = data_temp
+        }else{
+          data_mfreq = merge(data_mfreq, data_temp)
+        }
+      }
+      data_mfreq = data_mfreq[order(data_mfreq$chunk),]
+      
+      if(i == 1){
+        data_freq = data_mfreq
+      }else{
+        data_freq = rbind(data_freq, data_mfreq)
+      }
+    }
+  }
+  rm(data_temp, data_mfreq)
+}
+# Making plots ----
+if(!opts$multi_analyte){
+  # Joe Plots
   if (opts$joe_plots) {
     # Extract phases of first chunk
     data_target = extract_freq(data_join, -45)
@@ -239,9 +343,7 @@ if(!opts$multi_analyte){
     ggplot(data_effsz, aes(x = Time, y = EffectSize)) +
       geom_line()
   }
-  ## Other analyses ----
-  ### PCA ----
-  # Frequency targeting
+  # PCA
   if (!is.na(pca_opts$targeting)){
     data_pca = extract_freq(data_join, pca_opts$targeting)
   } else{
@@ -291,69 +393,8 @@ if(!opts$multi_analyte){
   }
   
   rm(plottype)
-}
-# Multi analyte ----
-if(opts$multi_analyte){
-  opts_multi = list(all_files = TRUE,
-                    field = "absz",
-                    scaling = "unscaled")
-  
-  # Open files
-  if(!opts_multi$all_files){
-    data_raw = read.csv(file_analyze, sep = ";")
-    
-    data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
-    
-    data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join))))
-    names(data_mlist)[1] = analyte
-    
-    file_analyze = file.choose()
-    while (!identical(file_analyze, character(0))) {
-      data_raw = read.csv(file_analyze, sep = ";")
-      
-      data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
-      
-      analyte = basename(dirname(dirname(file_analyze)))
-      data_mlist[[length(data_mlist) + 1]] = cbind(data_join, Analyte = rep(analyte, nrow(data_join)))
-      
-      names(data_mlist)[length(data_mlist)] = analyte
-      names(data_mlist) = make.names(names(data_mlist), unique = T)
-      
-      file_analyze = file.choose()
-    }
-    rm(data_raw, file_analyze, analyte)
-  }else{
-    base_dir = "Data/APTES" # Change this substrate directory
-    functionalization = strsplit(base_dir, split = "/")[[1]][2]
-    
-    # Organization of files is presumed to be Substrate > Analyte > All replicates of a given analyte in separate folders
-    data_filenames = list.files(paste(c(getwd(), base_dir), collapse = "/"), pattern = "_data_.*.csv", full.names = T, recursive = T)
-    if(length(data_filenames)==0){
-      stop("No data files found in directory. Check that data files have '_data_' on the name, or pick a different folder")
-    }
-    
-    for(i in 1:length(data_filenames)){
-      data_raw = read.csv(data_filenames[i], sep = ";")
-      
-      data_join = clean_data(data_raw, deep_clean = opts$deep_clean)
-      analyte = basename(dirname(dirname(data_filenames[i])))
-      
-      if(exists("data_mlist")){
-        data_mlist[[length(data_mlist) + 1]] = cbind(data_join, Analyte = rep(analyte, nrow(data_join)))
-        names(data_mlist)[length(data_mlist)] = analyte
-        names(data_mlist) = make.names(names(data_mlist), unique = T)
-        
-      }else{
-        data_mlist = list(cbind(data_join, Analyte = rep(analyte, nrow(data_join))))
-        names(data_mlist)[1] = analyte
-      }
-      
-    }
-    rm(data_raw, data_join, data_filenames, analyte, i)
-    
-  }
-  
-  # Putting it all in the same data frame for PCR
+}else{
+  # Putting it all in the same data frame for PCA
   for (i in 1:length(data_mlist)){
     data_temp = extract_freq(data_mlist[[i]])
     if(opts_multi$scaling == "scaled"){
@@ -361,14 +402,12 @@ if(opts$multi_analyte){
         data_temp[,pca_opts$pca_fields[i]] = (data_temp[,pca_opts$pca_fields[i]] - mean(data_temp[,pca_opts$pca_fields[i]]))/(sd(data_temp[,pca_opts$pca_fields[i]]))
       }
     }
-    if(exists("data_multi")){
-      data_multi = rbind(data_multi, data_temp)
-    }else{
+    if(i == 1){
       data_multi = data_temp
+    }else{
+      data_multi = rbind(data_multi, data_temp)
     }
   }
-  data_multi = data_multi %>% select(Analyte, everything())
-  data_multi$Analyte = as.factor(data_multi$Analyte)
   
   # For now simply remove NAs
   for (i in 1:length(pca_opts$pca_fields)){
@@ -386,12 +425,13 @@ if(opts$multi_analyte){
     pca_opts$targeting = "targeted"
     pca_opts$scaling = opts_multi$scaling
     pca_opts$color = "Analyte"
+    pca_opts$text = "Test"
     
     pca_loadings = signif(-1 * pca$rotation, digits = 3)
     pca_obj = pca$x
     plottype = c(paste(c(
-      "Target:", "Fields:", "Scaling:", "Color:"
-    ), pca_opts[1:4]))
+      "Target:", "Fields:", "Scaling:", "Color:", "Label:"
+    ), pca_opts[c("targeting", "fields", "scaling", "color", "text")]))
     
     # Count number of repeats per analyte
     analy_list = rep("", 7)
@@ -407,15 +447,20 @@ if(opts$multi_analyte){
     total_analy$Analytes = factor(total_analy$Analytes, levels = levels(data_multi$Analyte))
     total_analy = total_analy[order(total_analy$Analytes),]
     
-    pca_plot = ggplot(pca_obj, aes(x = PC1, y = PC2, color = data_multi[, pca_opts$color])) +
-      geom_point(size = 2, alpha = .4, position = "jitter") +
+    pca_plot = ggplot(pca_obj, aes(x = PC1, y = PC2, color = data_multi[, pca_opts$color], text = data_multi[, pca_opts$text])) +
+      #geom_point(size = 2, alpha = .4, position = "jitter") +
+      geom_text(label = data_multi$Test) +
       labs(x = paste0('PC1', ' (', (summary(pca)$importance[2, 1]), ')'),
-        y = paste0('PC2', ' (', (summary(pca)$importance[2, 2]), ')'),
-        color = pca_opts$color) +
-      scale_color_discrete(labels = paste(levels(total_analy$Analytes), total_analy$Repeats)) + 
+           y = paste0('PC2', ' (', (summary(pca)$importance[2, 2]), ')'),
+           color = pca_opts$color) +
       #scale_color_continuous(low = "magenta", high = "cyan") +
       ggtitle(paste0("Multianalyte PCA: ", functionalization, " functionalization"), subtitle = paste(plottype, collapse = ", ")) +
       theme_bw() + cutie_layer()
+    
+    pca_plot = switch (pca_opts$color,
+                       "Analyte" = pca_plot + scale_fill_discrete(labels = paste(levels(total_analy$Analytes), total_analy$Repeats)),
+                       "Test" = pca_plot + scale_fill_discrete(labels = paste("Test", levels(data_multi$Test)))
+    )
     
     pca_plot_tab = plot_grid(pca_plot, tableGrob(pca_loadings[, c("PC1", "PC2")]), rel_widths = c(3, 1)) +
       theme_bw()
@@ -423,19 +468,16 @@ if(opts$multi_analyte){
       customggsave(pca_plot_tab,
                    upscale = 2,
                    save_path = paste0("/",functionalization),
-                   name = paste(c("PCAmulti", pca_opts[1:4]), collapse = "_"))
+                   name = paste(c("PCAmulti", pca_opts[c("targeting", "scaling", "color", "text")]), collapse = "_"))
     }
   }
+  rm(data_temp)
 }
+
 ## Correlation plot ----
 
-
 ## Non-negative matrix factorization ----
-data_sub = data_multi[data_multi$Analyte=="Acetaldehyde",pca_opts$pca_fields]
-data_sub = abs(data_sub)
 
-nmf_res = nmf(data_sub, 4)
-summary(nmf_res)
 
 ## Other features ----
 
