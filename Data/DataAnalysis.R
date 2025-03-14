@@ -41,6 +41,7 @@ conc_increase = c(0, 0.1, 0.5, 1, 10, 50, 100) # Concentrations increase to thes
 # Support functions ----
 # Opening data
 clean_data = function(data, deep_clean = T) {
+  # Messy function to transform to R-friendly format
   data$timestamp = as.numeric(data$timestamp)
   data = data[!is.na(data$timestamp), ]
   data$chunk = as.numeric(data$chunk)
@@ -163,31 +164,35 @@ read_test = function(file = NULL){
   chipID = strsplit(basename(file), split = "[_|.]")[[1]][2]
   test = strsplit(basename(file), split = "[_|.]")[[1]][3]
   
+  # Read
   data_raw = read.csv(file, sep = ";")
   
   # Cleanup
   data_join = clean_data(data_raw, deep_clean = T)
   data_join = extract_freq(data_join, target_phase = -45)
   
+  # Add decoded data
   data_join$Analyte = analyte
   data_join$Round = round
   data_join$Functionalization = funct
   data_join$ChipID = chipID
   data_join$Test = test
   
+  # Reorder columns for clarity
   data_join = data_join %>% select(Functionalization, Analyte, Round, ChipID, Test, everything())
   
+  # Turn to factors for plotting further down the line
   data_join$Analyte = as.factor(data_join$Analyte)
   data_join$Round = as.factor(data_join$Round)
   data_join$Functionalization = as.factor(data_join$Functionalization)
   data_join$ChipID = as.factor(data_join$ChipID)
   data_join$Test = as.factor(data_join$Test)
   
-  
   return(data_join)
 }
 
 read_functionalization = function(folder = NULL, opts_multi){
+  # Iteratively read each test in folder and organize into list
   if(is.null(folder)){
     folder = choose.dir()
   }
@@ -210,6 +215,7 @@ read_functionalization = function(folder = NULL, opts_multi){
 
 # Cleaning data
 extract_freq = function(dataframe, target_phase = -45) {
+  # Extract a single frequency closest to the phasez specified by target_phase
   phase_deg = dataframe$phasez[dataframe$chunk == 0] * 180 / pi
   phase_close = order(abs(phase_deg - target_phase))
   
@@ -222,6 +228,7 @@ extract_freq = function(dataframe, target_phase = -45) {
 }
 
 frequency_sweep = function(df, phases, pca_opts){
+  # Extract set of frequencies as specified by phases
   for (j in 1:length(phases)){
     data_temp = extract_freq(df, phases[j])
     data_temp = data_temp[,c("Analyte", "Test", "chunk", "time", "concentration", pca_opts$pca_fields)]
@@ -244,6 +251,8 @@ frequency_sweep = function(df, phases, pca_opts){
 
 # Data analysis
 make_PCA_df = function(df, pca_opts){
+  # Turn data frame into a list of two outputs ideal for PCA plotting
+  
   # Remove NAs
   for (i in 1:length(pca_opts$pca_fields)){
     data_pca = df[!is.na(df[,pca_opts$pca_fields[i]]),]
